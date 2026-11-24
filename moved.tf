@@ -48,3 +48,21 @@ moved {
   from = aws_transfer_host_key.managed[9]
   to   = aws_transfer_host_key.managed["9"]
 }
+
+# The custom hostname tags are set on the server's tags. Forget the old tag resources without
+# deleting the tags: a delete would remove the tags the server has just set.
+removed {
+  from = aws_transfer_tag.custom_hostname
+
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_transfer_tag.route53_zone
+
+  lifecycle {
+    destroy = false
+  }
+}

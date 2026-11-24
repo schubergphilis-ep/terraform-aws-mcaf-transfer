@@ -7,6 +7,14 @@ locals {
   # Normalize Route 53 zone ID to its raw form (strip optional "/hostedzone/" prefix).
   route53_zone_id = var.route53_hosted_zone_id == null ? null : replace(var.route53_hosted_zone_id, "/^\\/hostedzone\\//", "")
 
+  # Custom hostname tags go on the server's own tags: separate aws_transfer_tag resources are read
+  # back into the server's tags and removed again on every apply. Whether they are set depends on
+  # custom_hostname only, so a zone ID that is known after apply does not fail the plan.
+  hostname_tags = var.custom_hostname == null ? {} : merge(
+    { "transfer:customHostname" = var.custom_hostname },
+    var.route53_hosted_zone_id == null ? {} : { "transfer:route53HostedZoneId" = local.route53_zone_id },
+  )
+
   # Users' SSH keys keyed by user name and a SHA-256 hash of the key body, so removing or
   # reordering a key leaves the other keys in place. A key listed twice for a user is imported once.
   user_ssh_keys = {
@@ -141,7 +149,7 @@ resource "aws_transfer_server" "default" {
   protocols = var.protocols
 
   # ── Tags (preserve original Name usage) ─────────────────────────────────────
-  tags = merge(var.tags, { Name = var.name })
+  tags = merge(var.tags, local.hostname_tags, { Name = var.name })
 
   # ── Endpoint details (VPC / VPC_ENDPOINT) ───────────────────────────────────
   dynamic "endpoint_details" {
@@ -313,22 +321,6 @@ resource "aws_transfer_host_key" "managed" {
   description      = each.value.description
 
   tags = merge(var.tags, { Name = "${var.name}-host-key-${each.key}" })
-}
-
-resource "aws_transfer_tag" "custom_hostname" {
-  count        = var.custom_hostname == null ? 0 : 1
-  region       = var.region
-  resource_arn = aws_transfer_server.default.arn
-  key          = "transfer:customHostname"
-  value        = var.custom_hostname
-}
-
-resource "aws_transfer_tag" "route53_zone" {
-  count        = local.route53_zone_id == null ? 0 : 1
-  region       = var.region
-  resource_arn = aws_transfer_server.default.arn
-  key          = "transfer:route53HostedZoneId"
-  value        = local.route53_zone_id
 }
 
 # ── Users (IAM roles provided by caller) ───────────────────────────────────────
