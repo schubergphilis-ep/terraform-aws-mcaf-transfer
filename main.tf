@@ -243,6 +243,7 @@ resource "aws_transfer_user" "default" {
   region              = var.region
   user_name           = each.key
   role                = each.value.role_arn
+  policy              = each.value.policy
   server_id           = aws_transfer_server.default.id
   home_directory      = var.restricted_mode ? null : each.value.home_directory
   home_directory_type = var.restricted_mode ? "LOGICAL" : "PATH"
@@ -251,10 +252,13 @@ resource "aws_transfer_user" "default" {
   tags = merge(var.tags, { Name = "${var.name}-${each.key}" })
 
   dynamic "home_directory_mappings" {
-    for_each = var.restricted_mode ? [1] : []
+    for_each = var.restricted_mode ? (
+      each.value.home_directory_mappings != null ? each.value.home_directory_mappings : [{ entry = "/", target = each.value.home_directory }]
+    ) : []
+
     content {
-      entry  = "/"
-      target = each.value.home_directory
+      entry  = home_directory_mappings.value.entry
+      target = home_directory_mappings.value.target
     }
   }
 }

@@ -191,11 +191,65 @@ variable "restricted_mode" {
 variable "users" {
   type = map(object({
     home_directory = string
-    role_arn       = string # External IAM role (created in your IAM module)
-    ssh_pub_keys   = list(string)
+    home_directory_mappings = optional(list(object({
+      entry  = string
+      target = string
+    })))
+    policy       = optional(string)
+    role_arn     = string # External IAM role (created in your IAM module)
+    ssh_pub_keys = list(string)
   }))
   default     = {}
-  description = "Transfer users: home_directory, role_arn, and SSH public keys. Each SSH key is identified by its user and a SHA-256 hash of the key body, so the keys must be known at plan time."
+  description = "Transfer users keyed by user name. home_directory is the PATH home directory, or with restricted_mode the target of the \"/\" mapping. home_directory_mappings (restricted_mode only) replaces that single mapping. policy is an optional session policy (JSON). Each SSH key is identified by its user and a SHA-256 hash of the key body, so the keys must be known at plan time."
+
+  validation {
+    condition     = alltrue([for name in keys(var.users) : can(regex("^[\\w][\\w@.-]{2,99}$", name))])
+    error_message = "User names must be 3-100 characters of letters, digits, underscores, hyphens, periods and at signs, and must not start with a hyphen, period or at sign."
+  }
+
+  validation {
+    condition = alltrue([
+      for user in values(var.users) : user.home_directory == "" || (can(regex("^/", user.home_directory)) && length(user.home_directory) <= 1024)
+    ])
+    error_message = "home_directory must be an absolute path: start with \"/\", at most 1024 characters."
+  }
+
+  validation {
+    condition = !var.restricted_mode || alltrue([
+      for user in values(var.users) : user.home_directory_mappings != null || can(regex("^/.*[^/]$", user.home_directory))
+    ])
+    error_message = "With restricted_mode, home_directory is a logical directory target: it must start with \"/\" and must not end with \"/\"."
+  }
+
+  validation {
+    condition     = var.restricted_mode || alltrue([for user in values(var.users) : user.home_directory_mappings == null])
+    error_message = "home_directory_mappings needs restricted_mode = true (LOGICAL home directories)."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for user in values(var.users) : [
+        for mapping in(user.home_directory_mappings == null ? [] : user.home_directory_mappings) : can(regex("^/", mapping.entry)) && can(regex("^/.*[^/]$", mapping.target))
+      ]
+    ]))
+    error_message = "Each home_directory_mappings entry must start with \"/\", and each target must start with \"/\" and must not end with \"/\"."
+  }
+
+  validation {
+    condition = alltrue([
+      for user in values(var.users) : user.home_directory_mappings == null ? true : (
+        length(user.home_directory_mappings) > 0 &&
+        length(distinct(user.home_directory_mappings[*].entry)) == length(user.home_directory_mappings) &&
+        (length(user.home_directory_mappings) == 1 || !contains(user.home_directory_mappings[*].entry, "/"))
+      )
+    ])
+    error_message = "home_directory_mappings must not overlap: entries must be unique, and an entry \"/\" must be the only mapping of its user."
+  }
+
+  validation {
+    condition     = alltrue([for user in values(var.users) : user.policy == null || can(jsondecode(user.policy))])
+    error_message = "A user's policy must be a JSON session policy document."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
