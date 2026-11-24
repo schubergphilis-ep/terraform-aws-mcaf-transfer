@@ -382,6 +382,9 @@ run "reject_password_only_auth" {
     logging_role_arn            = "arn:aws:iam::123456789012:role/transfer-logging"
     identity_provider_type      = "AWS_LAMBDA"
     sftp_authentication_methods = "PASSWORD"
+    identity_provider_details = {
+      function_arn = "arn:aws:lambda:eu-central-1:123456789012:function:transfer-idp"
+    }
   }
 
   expect_failures = [var.sftp_authentication_methods]

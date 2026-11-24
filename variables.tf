@@ -46,6 +46,16 @@ variable "vpc_endpoint" {
   })
   default     = null
   description = "Endpoint details depending on endpoint_type. For VPC, set vpc_id, subnet_ids, security_group_ids[, address_allocation_ids]. For VPC_ENDPOINT, set vpc_endpoint_id."
+
+  validation {
+    condition = var.vpc_endpoint == null ? true : (
+      var.vpc_endpoint.address_allocation_ids == null ? true : (
+        length(var.vpc_endpoint.address_allocation_ids) == 0 ||
+        length(var.vpc_endpoint.address_allocation_ids) == (var.vpc_endpoint.subnet_ids == null ? 0 : length(var.vpc_endpoint.subnet_ids))
+      )
+    )
+    error_message = "vpc_endpoint.address_allocation_ids needs one Elastic IP allocation per subnet in vpc_endpoint.subnet_ids."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -98,7 +108,17 @@ variable "identity_provider_details" {
     directory_id    = optional(string) # For AWS_DIRECTORY_SERVICE
   })
   default     = null
-  description = "Optional identity provider details; fields depend on identity_provider_type."
+  description = "Identity provider details; fields depend on identity_provider_type: function_arn for AWS_LAMBDA, url and invocation_role for API_GATEWAY, directory_id for AWS_DIRECTORY_SERVICE, none for SERVICE_MANAGED."
+
+  validation {
+    condition = toset(var.identity_provider_details == null ? [] : [for field, value in var.identity_provider_details : field if value != null]) == lookup({
+      SERVICE_MANAGED       = toset([])
+      AWS_LAMBDA            = toset(["function_arn"])
+      API_GATEWAY           = toset(["invocation_role", "url"])
+      AWS_DIRECTORY_SERVICE = toset(["directory_id"])
+    }, var.identity_provider_type, toset([]))
+    error_message = "identity_provider_details must match identity_provider_type: function_arn for AWS_LAMBDA, url and invocation_role for API_GATEWAY, directory_id for AWS_DIRECTORY_SERVICE, and none for SERVICE_MANAGED."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
