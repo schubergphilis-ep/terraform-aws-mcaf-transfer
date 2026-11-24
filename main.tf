@@ -129,7 +129,7 @@ resource "aws_transfer_server" "default" {
 
   # ── Endpoint & logging ──────────────────────────────────────────────────────
   endpoint_type               = var.endpoint_type
-  logging_role                = var.logging_role_arn
+  logging_role                = var.create_logging_role ? module.logging_role[0].arn : var.logging_role_arn
   structured_log_destinations = var.create_log_group ? toset(["${aws_cloudwatch_log_group.default[0].arn}:*"]) : var.structured_log_destinations
 
   # ── Banners & security policy ───────────────────────────────────────────────
@@ -208,6 +208,87 @@ resource "aws_cloudwatch_log_group" "default" {
   retention_in_days = var.log_retention
   skip_destroy      = var.log_group_skip_destroy
   tags              = var.tags
+}
+
+# ── Optional: logging role ────────────────────────────────────────────────────
+# Used by Transfer for workflow logs and the service-managed /aws/transfer/<server-id>
+# log group. Structured logging to a log group does not need it.
+data "aws_caller_identity" "current" {
+  count = var.create_logging_role ? 1 : 0
+}
+
+data "aws_partition" "current" {
+  count = var.create_logging_role ? 1 : 0
+}
+
+data "aws_region" "current" {
+  count = var.create_logging_role ? 1 : 0
+
+  region = var.region
+}
+
+locals {
+  logging_role_scope = var.create_logging_role ? {
+    account   = data.aws_caller_identity.current[0].account_id
+    partition = data.aws_partition.current[0].partition
+    region    = data.aws_region.current[0].region
+  } : null
+}
+
+data "aws_iam_policy_document" "logging_assume_role" {
+  count = var.create_logging_role ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["transfer.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.logging_role_scope.account]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.logging_role_scope.partition}:transfer:${local.logging_role_scope.region}:${local.logging_role_scope.account}:server/*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "logging" {
+  count = var.create_logging_role ? 1 : 0
+
+  statement {
+    sid = "TransferLogGroups"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:DescribeLogStreams",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:${local.logging_role_scope.partition}:logs:${local.logging_role_scope.region}:${local.logging_role_scope.account}:log-group:/aws/transfer/*"]
+  }
+}
+
+module "logging_role" {
+  count = var.create_logging_role ? 1 : 0
+
+  source  = "schubergphilis-ep/mcaf-role/aws"
+  version = "~> 0.6.0"
+
+  name                 = coalesce(var.logging_role_name, "TransferLogging-${var.name}")
+  assume_policy        = data.aws_iam_policy_document.logging_assume_role[0].json
+  create_policy        = true
+  description          = var.logging_role_description
+  permissions_boundary = var.logging_role_permissions_boundary
+  postfix              = false
+  role_policy          = data.aws_iam_policy_document.logging[0].json
+  tags                 = var.tags
 }
 
 # ── VPC_ENDPOINT is deprecated by AWS: new servers can't use it and it's absent

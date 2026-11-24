@@ -163,6 +163,40 @@ variable "logging_role_arn" {
   description = "IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module). Needed for workflow logs and for the service-managed /aws/transfer/<server-id> log group; structured logging needs no role."
 }
 
+variable "create_logging_role" {
+  type        = bool
+  default     = false
+  description = "Create an IAM role that Transfer uses to write workflow logs and the service-managed /aws/transfer/<server-id> log group. Conflicts with logging_role_arn."
+
+  validation {
+    condition     = !var.create_logging_role || var.logging_role_arn == null
+    error_message = "Set either create_logging_role or logging_role_arn, not both."
+  }
+
+  validation {
+    condition     = !var.create_logging_role || length(coalesce(var.logging_role_name, "TransferLogging-${var.name}")) <= 64
+    error_message = "The logging role name is longer than 64 characters: set a shorter logging_role_name."
+  }
+}
+
+variable "logging_role_description" {
+  type        = string
+  default     = null
+  description = "Description of the IAM role created with create_logging_role"
+}
+
+variable "logging_role_name" {
+  type        = string
+  default     = null
+  description = "Name of the IAM role created with create_logging_role. Defaults to TransferLogging-<name>"
+}
+
+variable "logging_role_permissions_boundary" {
+  type        = string
+  default     = null
+  description = "ARN of the permissions boundary to set on the IAM role created with create_logging_role"
+}
+
 variable "structured_log_destinations" {
   type        = set(string)
   default     = null

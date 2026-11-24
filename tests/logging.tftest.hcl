@@ -6,6 +6,25 @@ mock_provider "aws" {
       region = "eu-central-1"
     }
   }
+
+  mock_data "aws_caller_identity" {
+    defaults = {
+      account_id = "123456789012"
+    }
+  }
+
+  mock_data "aws_partition" {
+    defaults = {
+      partition = "aws"
+    }
+  }
+
+  # Policy arguments are validated as JSON, even with a mocked provider.
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{}"
+    }
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -209,4 +228,78 @@ run "reject_two_destinations" {
   }
 
   expect_failures = [var.structured_log_destinations]
+}
+
+# -----------------------------------------------------------------------------
+# Module-owned logging role (mcaf-role), named after the server by default.
+# -----------------------------------------------------------------------------
+run "create_logging_role" {
+  command = plan
+
+  module {
+    source = "./"
+  }
+
+  variables {
+    name                     = "example-logging"
+    create_logging_role      = true
+    logging_role_description = "Transfer logging for example-logging"
+  }
+
+  assert {
+    condition     = module.logging_role[0].name == "TransferLogging-example-logging"
+    error_message = "Expected the logging role TransferLogging-example-logging, got: ${module.logging_role[0].name}"
+  }
+
+  assert {
+    condition     = data.aws_iam_policy_document.logging[0].statement[0].resources == toset(["arn:aws:logs:eu-central-1:123456789012:log-group:/aws/transfer/*"])
+    error_message = "Expected the logging role policy to be limited to /aws/transfer/* log groups."
+  }
+
+  assert {
+    condition     = contains(flatten([for condition in data.aws_iam_policy_document.logging_assume_role[0].statement[0].condition : condition.values if condition.variable == "aws:SourceArn"]), "arn:aws:transfer:eu-central-1:123456789012:server/*")
+    error_message = "Expected the trust policy to be limited to Transfer servers in this account and region."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Logging role with a custom name.
+# -----------------------------------------------------------------------------
+run "logging_role_name" {
+  command = plan
+
+  module {
+    source = "./"
+  }
+
+  variables {
+    name                              = "example-logging"
+    create_logging_role               = true
+    logging_role_name                 = "TransferLoggingExample"
+    logging_role_permissions_boundary = "arn:aws:iam::123456789012:policy/boundary"
+  }
+
+  assert {
+    condition     = module.logging_role[0].name == "TransferLoggingExample"
+    error_message = "Expected the logging role TransferLoggingExample, got: ${module.logging_role[0].name}"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Negative: create_logging_role and logging_role_arn together.
+# -----------------------------------------------------------------------------
+run "reject_logging_role_and_arn" {
+  command = plan
+
+  module {
+    source = "./"
+  }
+
+  variables {
+    name                = "example-logging"
+    create_logging_role = true
+    logging_role_arn    = "arn:aws:iam::123456789012:role/transfer-logging"
+  }
+
+  expect_failures = [var.create_logging_role]
 }

@@ -300,7 +300,9 @@ module "example-transfer" {
 
 ## Modules
 
-No modules.
+| Name | Source | Version |
+|------|--------|---------|
+| <a name="module_logging_role"></a> [logging\_role](#module\_logging\_role) | schubergphilis-ep/mcaf-role/aws | ~> 0.6.0 |
 
 ## Resources
 
@@ -313,6 +315,11 @@ No modules.
 | [aws_transfer_tag.custom_hostname](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/transfer_tag) | resource |
 | [aws_transfer_tag.route53_zone](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/transfer_tag) | resource |
 | [aws_transfer_user.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/transfer_user) | resource |
+| [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_iam_policy_document.logging](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.logging_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
+| [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 
 ## Inputs
 
@@ -320,6 +327,7 @@ No modules.
 |------|-------------|------|---------|:--------:|
 | <a name="input_name"></a> [name](#input\_name) | A unique name for this transfer server instance. Used as the Name tag in the AWS Transfer Family console. | `string` | n/a | yes |
 | <a name="input_create_log_group"></a> [create\_log\_group](#input\_create\_log\_group) | Create the CloudWatch log group /aws/transfer/<name> and send the server's structured (JSON) logs to it. Conflicts with structured\_log\_destinations. | `bool` | `false` | no |
+| <a name="input_create_logging_role"></a> [create\_logging\_role](#input\_create\_logging\_role) | Create an IAM role that Transfer uses to write workflow logs and the service-managed /aws/transfer/<server-id> log group. Conflicts with logging\_role\_arn. | `bool` | `false` | no |
 | <a name="input_custom_hostname"></a> [custom\_hostname](#input\_custom\_hostname) | Optional custom DNS name to display in the AWS Transfer console Hostname column. | `string` | `null` | no |
 | <a name="input_endpoint_type"></a> [endpoint\_type](#input\_endpoint\_type) | Endpoint type: PUBLIC \| VPC \| VPC\_ENDPOINT | `string` | `"PUBLIC"` | no |
 | <a name="input_host_keys"></a> [host\_keys](#input\_host\_keys) | List of host keys to attach. Each key is identified by its name (the list index when unset), so removing or reordering a named key leaves the others in place. Private keys are passed via the write-only host\_key\_body\_wo argument (TF 1.11+) and are never stored in state. | <pre>list(object({<br/>    name        = optional(string) # Stable key of the host key resource; defaults to the list index<br/>    private_key = string           # Sensitive; inject from CI/env<br/>    description = optional(string)<br/>  }))</pre> | `[]` | no |
@@ -330,6 +338,9 @@ No modules.
 | <a name="input_log_retention"></a> [log\_retention](#input\_log\_retention) | Number of days to retain log events in the log group created with create\_log\_group | `number` | `365` | no |
 | <a name="input_logging_policy"></a> [logging\_policy](#input\_logging\_policy) | DEPRECATED: Previously attached to an internal logging role. Provide an external logging\_role\_arn instead. | `string` | `"arn:aws:iam::aws:policy/service-role/AWSTransferLoggingAccess"` | no |
 | <a name="input_logging_role_arn"></a> [logging\_role\_arn](#input\_logging\_role\_arn) | IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module). Needed for workflow logs and for the service-managed /aws/transfer/<server-id> log group; structured logging needs no role. | `string` | `null` | no |
+| <a name="input_logging_role_description"></a> [logging\_role\_description](#input\_logging\_role\_description) | Description of the IAM role created with create\_logging\_role | `string` | `null` | no |
+| <a name="input_logging_role_name"></a> [logging\_role\_name](#input\_logging\_role\_name) | Name of the IAM role created with create\_logging\_role. Defaults to TransferLogging-<name> | `string` | `null` | no |
+| <a name="input_logging_role_permissions_boundary"></a> [logging\_role\_permissions\_boundary](#input\_logging\_role\_permissions\_boundary) | ARN of the permissions boundary to set on the IAM role created with create\_logging\_role | `string` | `null` | no |
 | <a name="input_manage_host_keys"></a> [manage\_host\_keys](#input\_manage\_host\_keys) | If true, attach/import host key(s) to the server using write-only private keys. | `bool` | `false` | no |
 | <a name="input_on_partial_upload"></a> [on\_partial\_upload](#input\_on\_partial\_upload) | Optional workflow to execute after a file is partially uploaded. | <pre>object({<br/>    execution_role_arn = string<br/>    workflow_id        = string<br/>  })</pre> | `null` | no |
 | <a name="input_on_upload"></a> [on\_upload](#input\_on\_upload) | Optional workflow to execute after a file is uploaded. | <pre>object({<br/>    execution_role_arn = string<br/>    workflow_id        = string<br/>  })</pre> | `null` | no |
