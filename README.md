@@ -289,14 +289,14 @@ module "example-transfer" {
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.11 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.20.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.20.0 |
 
 ## Modules
 
@@ -334,6 +334,7 @@ No modules.
 | <a name="input_pre_login_banner"></a> [pre\_login\_banner](#input\_pre\_login\_banner) | DEPRECATED: Replaced by 'pre\_authentication\_login\_banner'. | `string` | `null` | no |
 | <a name="input_protocol_details"></a> [protocol\_details](#input\_protocol\_details) | Advanced protocol details for FTPS and AS2. Note: FTP is not supported by this module. | <pre>object({<br/>    as2_transports              = optional(list(string)) # AS2 transport, e.g. ["HTTP"]<br/>    passive_ip                  = optional(string)       # FTPS passive-mode public IP<br/>    tls_session_resumption_mode = optional(string)       # ENABLED | DISABLED (FTPS)<br/>  })</pre> | `null` | no |
 | <a name="input_protocols"></a> [protocols](#input\_protocols) | Enabled protocols (FTP is forbidden): any of SFTP, FTPS, AS2. Note: AS2 only enables the protocol on the server; agreements, connectors, profiles, and certificates are managed outside this module. | `list(string)` | <pre>[<br/>  "SFTP"<br/>]</pre> | no |
+| <a name="input_region"></a> [region](#input\_region) | The AWS region where resources will be created; if omitted the default provider region is used | `string` | `null` | no |
 | <a name="input_restricted_mode"></a> [restricted\_mode](#input\_restricted\_mode) | Lock users to logical home directories (LOGICAL) with mappings. | `bool` | `false` | no |
 | <a name="input_route53_hosted_zone_id"></a> [route53\_hosted\_zone\_id](#input\_route53\_hosted\_zone\_id) | Optional Route 53 hosted zone ID for the custom hostname. | `string` | `null` | no |
 | <a name="input_s3_storage_options"></a> [s3\_storage\_options](#input\_s3\_storage\_options) | S3 storage options. Set directory\_listing\_optimization to ENABLED to speed up directory listings on S3-backed servers. | <pre>object({<br/>    directory_listing_optimization = optional(string) # ENABLED | DISABLED<br/>  })</pre> | `null` | no |

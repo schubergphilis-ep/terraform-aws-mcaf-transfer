@@ -102,6 +102,8 @@ resource "aws_transfer_server" "default" {
     }
   }
 
+  region = var.region
+
   # ── Identity provider & authentication (v5/v6) ──────────────────────────────
   identity_provider_type = var.identity_provider_type
   # NOTE: In v5+, this is a top-level arg (also valid in v6). Only for API_GATEWAY/AWS_LAMBDA.
@@ -198,6 +200,7 @@ check "vpc_endpoint_deprecated" {
 resource "aws_transfer_host_key" "managed" {
   count = var.manage_host_keys ? length(var.host_keys) : 0
 
+  region           = var.region
   server_id        = aws_transfer_server.default.id
   host_key_body_wo = var.host_keys[count.index].private_key
   description      = try(var.host_keys[count.index].description, null)
@@ -207,6 +210,7 @@ resource "aws_transfer_host_key" "managed" {
 
 resource "aws_transfer_tag" "custom_hostname" {
   count        = var.custom_hostname == null ? 0 : 1
+  region       = var.region
   resource_arn = aws_transfer_server.default.arn
   key          = "transfer:customHostname"
   value        = var.custom_hostname
@@ -214,6 +218,7 @@ resource "aws_transfer_tag" "custom_hostname" {
 
 resource "aws_transfer_tag" "route53_zone" {
   count        = local.route53_zone_id == null ? 0 : 1
+  region       = var.region
   resource_arn = aws_transfer_server.default.arn
   key          = "transfer:route53HostedZoneId"
   value        = local.route53_zone_id
@@ -223,6 +228,7 @@ resource "aws_transfer_tag" "route53_zone" {
 resource "aws_transfer_user" "default" {
   for_each = var.users
 
+  region              = var.region
   user_name           = each.key
   role                = each.value.role_arn
   server_id           = aws_transfer_server.default.id
@@ -244,6 +250,7 @@ resource "aws_transfer_user" "default" {
 resource "aws_transfer_ssh_key" "default" {
   for_each = local.user_ssh_keys
 
+  region    = var.region
   server_id = aws_transfer_server.default.id
   user_name = aws_transfer_user.default[each.value.user].user_name
   body      = each.value.ssh_key
