@@ -292,7 +292,7 @@ variable "users" {
     ssh_pub_keys = list(string)
   }))
   default     = {}
-  description = "Transfer users keyed by user name. home_directory is the PATH home directory, or with restricted_mode the target of the \"/\" mapping. home_directory_mappings (restricted_mode only) replaces that single mapping. policy is an optional session policy (JSON). Each SSH key is identified by its user and a SHA-256 hash of the key body, so the keys must be known at plan time."
+  description = "Transfer users keyed by user name. home_directory is the PATH home directory, or with restricted_mode the target of the \"/\" mapping. home_directory_mappings (restricted_mode only) replaces that single mapping. policy is an optional session policy (JSON). SSH keys are identified by user and list index: add new keys at the end of ssh_pub_keys."
 
   validation {
     condition     = alltrue([for name in keys(var.users) : can(regex("^[\\w][\\w@.-]{2,99}$", name))])

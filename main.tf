@@ -15,17 +15,17 @@ locals {
     var.route53_hosted_zone_id == null ? {} : { "transfer:route53HostedZoneId" = local.route53_zone_id },
   )
 
-  # Users' SSH keys keyed by user name and a SHA-256 hash of the key body, so removing or
-  # reordering a key leaves the other keys in place. A key listed twice for a user is imported once.
+  # Users' SSH keys keyed by user name and list index
   user_ssh_keys = {
     for item in flatten([
       for user, config in var.users : [
-        for ssh_key in distinct(config.ssh_pub_keys) : {
+        for idx, ssh_key in config.ssh_pub_keys : {
+          index   = idx
           user    = user
           ssh_key = ssh_key
         }
       ]
-    ]) : "${item.user}:${sha256(item.ssh_key)}" => item
+    ]) : "${item.user}:${item.index}" => item
   }
 
   # Host keys keyed by name; an unnamed key is named after its list index. Only the private keys

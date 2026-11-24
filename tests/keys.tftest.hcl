@@ -130,10 +130,9 @@ run "reject_duplicate_host_key_names" {
 }
 
 # -----------------------------------------------------------------------------
-# SSH keys: keyed by user and a SHA-256 hash of the key body, not the list
-# index. A key listed twice for a user is imported once.
+# SSH keys: keyed by user and list index, the same addresses as in 2.0.0.
 # -----------------------------------------------------------------------------
-run "ssh_keys_keyed_by_body" {
+run "ssh_keys_keyed_by_index" {
   command = plan
 
   module {
@@ -150,7 +149,6 @@ run "ssh_keys_keyed_by_body" {
         ssh_pub_keys = [
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop",
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice2 alice@desktop",
-          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop",
         ]
       }
       bob = {
@@ -162,16 +160,12 @@ run "ssh_keys_keyed_by_body" {
   }
 
   assert {
-    condition = toset(keys(aws_transfer_ssh_key.default)) == toset([
-      "alice:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop")}",
-      "alice:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice2 alice@desktop")}",
-      "bob:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop")}",
-    ])
-    error_message = "Expected SSH keys keyed by user and key hash, got: ${jsonencode(keys(aws_transfer_ssh_key.default))}"
+    condition     = toset(keys(aws_transfer_ssh_key.default)) == toset(["alice:0", "alice:1", "bob:0"])
+    error_message = "Expected SSH keys keyed by user and list index, got: ${jsonencode(keys(aws_transfer_ssh_key.default))}"
   }
 
   assert {
-    condition     = aws_transfer_ssh_key.default["bob:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop")}"].body == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop"
+    condition     = aws_transfer_ssh_key.default["alice:1"].body == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice2 alice@desktop"
     error_message = "Expected the SSH key body to be passed unchanged."
   }
 }

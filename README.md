@@ -96,7 +96,12 @@ data "aws_iam_policy_document" "session" {
 
 ## SSH keys
 
-Each key in `users[*].ssh_pub_keys` is imported once per user and identified by its user and a SHA-256 hash of the key body, so removing or reordering a key leaves the user's other keys in place. The keys must be known at plan time.
+Each key in `users[*].ssh_pub_keys` is imported for its user and identified by user and list index (`<user>:<index>`).
+
+AWS refuses to import a key body that the user still has. Removing or reordering keys in `ssh_pub_keys` changes the index of the keys after it, so Terraform deletes and imports those keys again in parallel, and the apply can fail with `ResourceExistsException: Public key already exists`, leaving the user without that key until the next apply. Change the list safely:
+
+- Add a new key at the end of the list.
+- To remove a key, remove only the last one, or apply the removal first and add the remaining keys back in a second apply.
 
 An SSH public key set on more than one user lets its holder sign in as each of those users. Give each person their own key per user.
 
@@ -191,7 +196,7 @@ A logging role is only needed for workflow logs and the service-managed `/aws/tr
 | <a name="input_structured_log_destinations"></a> [structured\_log\_destinations](#input\_structured\_log\_destinations) | Set of CloudWatch Logs log-group ARNs for structured (JSON) logging, in the form arn:<partition>:logs:<region>:<account>:log-group:<name>:*. At most one. Leave null to use unstructured logging, or use create\_log\_group. | `set(string)` | `null` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to assign to resources. Prefer provider default\_tags at root. | `map(string)` | `{}` | no |
 | <a name="input_transfer_security_policy"></a> [transfer\_security\_policy](#input\_transfer\_security\_policy) | Explicit AWS Transfer security policy name. Pin a current, provider-supported value to avoid drift and satisfy CKV\_AWS\_380. | `string` | `"TransferSecurityPolicy-2025-03"` | no |
-| <a name="input_users"></a> [users](#input\_users) | Transfer users keyed by user name. home\_directory is the PATH home directory, or with restricted\_mode the target of the "/" mapping. home\_directory\_mappings (restricted\_mode only) replaces that single mapping. policy is an optional session policy (JSON). Each SSH key is identified by its user and a SHA-256 hash of the key body, so the keys must be known at plan time. | <pre>map(object({<br/>    home_directory = string<br/>    home_directory_mappings = optional(list(object({<br/>      entry  = string<br/>      target = string<br/>    })))<br/>    policy       = optional(string)<br/>    role_arn     = string # External IAM role (created in your IAM module)<br/>    ssh_pub_keys = list(string)<br/>  }))</pre> | `{}` | no |
+| <a name="input_users"></a> [users](#input\_users) | Transfer users keyed by user name. home\_directory is the PATH home directory, or with restricted\_mode the target of the "/" mapping. home\_directory\_mappings (restricted\_mode only) replaces that single mapping. policy is an optional session policy (JSON). SSH keys are identified by user and list index: add new keys at the end of ssh\_pub\_keys. | <pre>map(object({<br/>    home_directory = string<br/>    home_directory_mappings = optional(list(object({<br/>      entry  = string<br/>      target = string<br/>    })))<br/>    policy       = optional(string)<br/>    role_arn     = string # External IAM role (created in your IAM module)<br/>    ssh_pub_keys = list(string)<br/>  }))</pre> | `{}` | no |
 | <a name="input_vpc_endpoint"></a> [vpc\_endpoint](#input\_vpc\_endpoint) | Endpoint details depending on endpoint\_type. For VPC, set vpc\_id, subnet\_ids, security\_group\_ids[, address\_allocation\_ids]. For VPC\_ENDPOINT, set vpc\_endpoint\_id. | <pre>object({<br/>    address_allocation_ids = optional(list(string))<br/>    security_group_ids     = optional(list(string))<br/>    subnet_ids             = optional(list(string))<br/>    vpc_endpoint_id        = optional(string)<br/>    vpc_id                 = optional(string)<br/>  })</pre> | `null` | no |
 
 ## Outputs
@@ -210,7 +215,7 @@ A logging role is only needed for workflow logs and the service-managed `/aws/tr
 | <a name="output_pre_login_banner_deprecation"></a> [pre\_login\_banner\_deprecation](#output\_pre\_login\_banner\_deprecation) | Deprecation message for pre\_login\_banner. |
 | <a name="output_server_arn"></a> [server\_arn](#output\_server\_arn) | ARN of the transfer server. |
 | <a name="output_server_id"></a> [server\_id](#output\_server\_id) | Server ID (stable identifier; must not change). |
-| <a name="output_ssh_key_ids"></a> [ssh\_key\_ids](#output\_ssh\_key\_ids) | IDs of the imported SSH public keys, by "<user>:<SHA-256 of the key body>". |
+| <a name="output_ssh_key_ids"></a> [ssh\_key\_ids](#output\_ssh\_key\_ids) | IDs of the imported SSH public keys, by "<user>:<index in ssh\_pub\_keys>". |
 | <a name="output_user_arns"></a> [user\_arns](#output\_user\_arns) | ARNs of the transfer users. |
 | <a name="output_vpc_endpoint_dns_name"></a> [vpc\_endpoint\_dns\_name](#output\_vpc\_endpoint\_dns\_name) | Regional DNS name of the server's VPC endpoint (VPC and VPC\_ENDPOINT endpoint types). |
 | <a name="output_vpc_endpoint_id"></a> [vpc\_endpoint\_id](#output\_vpc\_endpoint\_id) | ID of the server's VPC endpoint (VPC and VPC\_ENDPOINT endpoint types). |

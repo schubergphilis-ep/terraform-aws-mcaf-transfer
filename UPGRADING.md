@@ -8,17 +8,6 @@ This document captures required refactoring on your part when upgrading to a mod
 
 No input change is needed. The module needs Terraform 1.11.0 or later and AWS provider 6.20.0 or later. The first plan after the upgrade shows:
 
-- **SSH keys** are identified by user and a SHA-256 hash of the key body instead of their list index. Each `aws_transfer_ssh_key.default["<user>:<index>"]` is destroyed and created again as `aws_transfer_ssh_key.default["<user>:<hash>"]`, with the same key body and a new SSH key ID. During that apply a user can briefly be without the key. To move the keys instead, add a `moved` block per key to your configuration before the upgrade apply; `terraform console` prints the hash with `sha256("<key body>")`:
-
-  ```hcl
-  moved {
-    from = module.transfer.aws_transfer_ssh_key.default["alice:0"]
-    to   = module.transfer.aws_transfer_ssh_key.default["alice:<sha256 of alice's first key>"]
-  }
-  ```
-
-  SSH keys must be known at plan time: a key that is only known after apply fails the plan.
-
 - **Host keys** are identified by their new optional `name`, or by their list index when unnamed. The module moves `aws_transfer_host_key.managed[<index>]` to `aws_transfer_host_key.managed["<index>"]` for the first ten keys, so unnamed keys stay in place. To name an existing key, move it in your configuration as well, or it is deleted and imported again (same key material, new host key ID):
 
   ```hcl

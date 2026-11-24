@@ -50,7 +50,7 @@ output "logging_role_arn" {
 
 output "ssh_key_ids" {
   value       = { for key, ssh_key in aws_transfer_ssh_key.default : key => ssh_key.ssh_key_id }
-  description = "IDs of the imported SSH public keys, by \"<user>:<SHA-256 of the key body>\"."
+  description = "IDs of the imported SSH public keys, by \"<user>:<index in ssh_pub_keys>\"."
 }
 
 output "vpc_endpoint_dns_name" {
