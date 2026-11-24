@@ -1,288 +1,122 @@
 # terraform-aws-mcaf-transfer
 
-Creates an AWS Transfer Family server and Transfer Family users (each with one or more SSH public keys).
-IAM roles are **not** created by this module; callers must provide external IAM roles for logging and users.
+Terraform module to create an AWS Transfer Family SFTP server with service-managed users and their SSH keys.
 
-## Example 1 — endpoint_type = "PUBLIC" (default)
+> [!TIP]
+> We do not pin modules to versions in our examples. We highly recommend that in your code you pin the version to the exact version you are using so that your infrastructure remains stable.
+
+> [!IMPORTANT]
+> The module supports SFTP. FTPS and AS2 are not supported and will be removed in the next major version.
+
+## Usage
+
 ```hcl
-module "example-transfer" {
-  source = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
+module "transfer" {
+  source = "schubergphilis-ep/mcaf-transfer/aws"
 
-  name                     = "example"
-  endpoint_type            = "PUBLIC" # default if omitted
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  # IAM role for CloudWatch logging (must be created externally)
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  users = {
-    user1 = {
-      home_directory = "/bucketname/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["key1", "key2"]
-    }
-  }
-}
-```
-
-## Example 2 — endpoint_type = "VPC"
-## The AWS Transfer Family service creates the VPC endpoint inside your VPC.
-```hcl
-module "example-transfer" {
-  source = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-
-  name                     = "example"
-  endpoint_type            = "VPC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
+  name          = "partners"
+  endpoint_type = "VPC"
 
   vpc_endpoint = {
-    address_allocation_ids = ["eipalloc-12345", "eipalloc-67890"] # optional
-    security_group_ids     = ["sg-12345678901234567"]
-    subnet_ids             = ["subnet-12345", "subnet-67890"]
-    vpc_id                 = "vpc-123456"
+    security_group_ids = [aws_security_group.transfer.id]
+    subnet_ids         = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+    vpc_id             = "vpc-0123456789abcdef0"
   }
 
+  create_log_group = true
+  kms_key_arn      = aws_kms_key.logs.arn
+  restricted_mode  = true
+
   users = {
-    user1 = {
-      home_directory = "/bucketname/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["key1", "key2"]
+    alice = {
+      home_directory = "/example-bucket/alice"
+      policy         = data.aws_iam_policy_document.session.json
+      role_arn       = module.transfer_user_role.arn
+      ssh_pub_keys   = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... alice@example"]
     }
   }
 }
 ```
 
-## Example 3 — endpoint_type = "VPC_ENDPOINT"
-## Use an existing VPC Endpoint (interface endpoint).
+The module creates no IAM roles for users: pass them in `users[*].role_arn`. See [examples/basic](examples/basic) for a shared user role with session policies and [examples/vpc-internal](examples/vpc-internal) for an internal VPC server.
+
+## Endpoint types
+
+- `PUBLIC` (default): reachable from the internet. It takes no security group, so it allows no IP allow-list.
+- `VPC`: the endpoint lives in your subnets and takes security groups in `vpc_endpoint.security_group_ids`.
+  - Internal: no `address_allocation_ids`. The server hostname `s-<id>.server.transfer.<region>.amazonaws.com` has no DNS record; clients connect to the VPC endpoint, whose DNS name is in the `vpc_endpoint_dns_name` output.
+  - Internet-facing: one Elastic IP allocation per subnet in `vpc_endpoint.address_allocation_ids`. The security group is then the IP allow-list.
+  - The security group only needs ingress on tcp/22 from the clients. Security groups are stateful, so it needs no egress rules.
+- `VPC_ENDPOINT`: deprecated by AWS; the plan warns about it.
+
+## Users and session policies
+
+With `restricted_mode = true`, users get logical home directories: `/` maps to `home_directory`, or to the entries of `home_directory_mappings`. Mappings must not overlap: an entry `/` must be the only mapping of its user. Targets start with `/` and must not end with `/`.
+
+A user's `policy` is a session policy: AWS Transfer Family applies it on top of the user's role. One role can then serve all users, each limited to their own prefix:
+
 ```hcl
-module "example-transfer" {
-  source = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
+data "aws_iam_policy_document" "session" {
+  statement {
+    sid       = "ListOwnPrefix"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::example-bucket"]
 
-  name                     = "example"
-  endpoint_type            = "VPC_ENDPOINT"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  vpc_endpoint = {
-    vpc_endpoint_id = "vpce-1234567890abcdef"
-    # No security_group_ids, subnet_ids, or vpc_id allowed in VPC_ENDPOINT mode
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["$${transfer:UserName}/*"]
+    }
   }
 
-  users = {
-    user1 = {
-      home_directory = "/bucketname/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["key1", "key2"]
+  statement {
+    sid       = "OwnObjects"
+    actions   = ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"]
+    resources = ["arn:aws:s3:::example-bucket/$${transfer:UserName}/*"]
+  }
+
+  statement {
+    sid       = "KmsOwnPrefix"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [aws_kms_key.bucket.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "kms:EncryptionContext:aws:s3:arn"
+      values   = ["arn:aws:s3:::example-bucket/$${transfer:UserName}/*"]
     }
   }
 }
 ```
 
-## Example 4
-## identity_provider_type = "AWS_LAMBDA" with sftp_authentication_methods
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-lambda-idp"
+- Use `${transfer:UserName}` with the bucket name written out. The `${transfer:HomeDirectory}`, `${transfer:HomeBucket}` and `${transfer:HomeFolder}` variables do not work with logical home directories.
+- On an SSE-KMS bucket the session policy must grant `kms:Decrypt` and `kms:GenerateDataKey`, as above. Without them downloads fail, and uploads fail when the file is closed: some clients still report the upload as done. The encryption-context condition above matches object ARNs, which S3 uses when S3 Bucket Keys are off.
+- Grant no ACL actions and no `s3:DeleteObjectVersion`, so users cannot remove older object versions.
+- The role stays the upper bound: it needs the same S3 and KMS actions on the whole bucket.
 
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
+## SSH keys
 
-  logging_role_arn = aws_iam_role.transfer_logging.arn
+Each key in `users[*].ssh_pub_keys` is imported once per user and identified by its user and a SHA-256 hash of the key body, so removing or reordering a key leaves the user's other keys in place. The keys must be known at plan time.
 
-  identity_provider_type      = "AWS_LAMBDA"
-  sftp_authentication_methods = "PUBLIC_KEY_OR_PASSWORD"
+An SSH public key set on more than one user lets its holder sign in as each of those users. Give each person their own key per user.
 
-  identity_provider_details = {
-    function_arn = aws_lambda_function.transfer_identity_provider.arn
-  }
+## Host keys
 
-  users = {
-    user1 = {
-      home_directory = "/bucket/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["ssh-rsa AAAAB3Nz...", "ssh-ed25519 AAAAC3Nz..."]
-    }
-  }
-}
-```
+Without `host_keys`, AWS generates the server's host key. A change that replaces the server, such as `identity_provider_type` or the VPC, then gives clients a new host key. To keep the host key, import it with `manage_host_keys = true` and `host_keys`: the private key is passed through a write-only argument and is not stored in the state.
 
-## Example 5
-## identity_provider_type = "API_GATEWAY" with PASSWORD-based authentication
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-apigw-idp"
+Give each host key a `name`: keys are identified by name, or by their list index when unnamed. To rotate a key, add the new key first and remove the old one later.
 
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
+## Logging
 
-  logging_role_arn = aws_iam_role.transfer_logging.arn
+`create_log_group = true` creates the log group `/aws/transfer/<name>` (`kms_key_arn`, `log_retention`, default 365 days, and `log_group_skip_destroy`) and sends the server's structured JSON logs to it. Alternatively, pass an existing log group in `structured_log_destinations`.
 
-  identity_provider_type      = "API_GATEWAY"
-  sftp_authentication_methods = "PASSWORD"
+Structured logging needs no logging role. When Terraform creates or updates the server, AWS Transfer Family adds a resource policy for `delivery.logs.amazonaws.com` to the log group as the deploying principal, which needs `logs:DescribeLogGroups`, `logs:DescribeResourcePolicies` and `logs:PutResourcePolicy`. The KMS key policy must allow `logs.<region>.amazonaws.com`.
 
-  identity_provider_details = {
-    url             = "https://abc123.execute-api.eu-west-1.amazonaws.com/prod/auth"
-    invocation_role = aws_iam_role.transfer_apigw_invoke.arn
-  }
+A logging role is only needed for workflow logs and the service-managed `/aws/transfer/<server-id>` log group: set `create_logging_role = true` for a role limited to `/aws/transfer/*` log groups (`logging_role_name`, `logging_role_description`, `logging_role_permissions_boundary`), or pass your own `logging_role_arn`.
 
-  users = {
-    user1 = {
-      home_directory = "/bucket/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = [] # optional if password-only auth is used
-    }
-  }
-}
-```
+## Custom hostname
 
-## Example 6
-## identity_provider_type = "AWS_DIRECTORY_SERVICE"
-## (sftp_authentication_methods must be null)
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-directory-service"
-
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  identity_provider_type      = "AWS_DIRECTORY_SERVICE"
-  sftp_authentication_methods = null
-
-  identity_provider_details = {
-    directory_id = "d-1234567890"
-  }
-
-  users = {
-    user1 = {
-      home_directory = "/bucket/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["ssh-ed25519 AAAAC3Nz..."]
-    }
-  }
-}
-```
-
-## Example 7
-## protocols = ["FTPS"]
-## FTPS passive mode configuration with TLS resumption
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-ftps"
-
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  protocols = ["FTPS"]
-
-  protocol_details = {
-    passive_ip                  = "198.51.100.42"
-    tls_session_resumption_mode = "ENABLED"
-  }
-
-  users = {
-    ftps_user = {
-      home_directory = "/bucket/ftps"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = []
-    }
-  }
-}
-```
-
-## Example 8
-
-`protocols = ["AS2"]` — AS2 over HTTP.
-
-> **Scope note:** This module only enables the AS2 protocol on the Transfer
-> server (`protocols` + `protocol_details.as2_transports`). The AS2 messaging
-> resources — `aws_transfer_connector`, `aws_transfer_agreement`,
-> `aws_transfer_profile`, and `aws_transfer_certificate` — are **not** managed
-> here and must be created separately. SFTP-style `users` do not apply to AS2.
-
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-as2"
-
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  protocols = ["AS2"]
-
-  protocol_details = {
-    as2_transports = ["HTTP"]
-  }
-
-  # AS2 agreements, connectors, profiles, and certificates are managed outside
-  # this module. No SFTP users are defined for an AS2-only server.
-  users = {}
-}
-```
-
-
-## Example 9
-## protocols = ["SFTP", "FTPS"]
-## Mixed-mode SFTP + FTPS (passive IP applies only to FTPS)
-```hcl
-module "example-transfer" {
-  source                   = "github.com/schubergphilis/terraform-aws-mcaf-transfer"
-  name                     = "example-sftp-ftps"
-
-  endpoint_type            = "PUBLIC"
-  restricted_mode          = false
-  tags                     = {}
-  transfer_security_policy = "TransferSecurityPolicy-2025-03"
-
-  logging_role_arn = aws_iam_role.transfer_logging.arn
-
-  protocols = ["SFTP", "FTPS"]
-
-  protocol_details = {
-    passive_ip                  = "198.51.100.88"
-    tls_session_resumption_mode = "ENABLED"
-  }
-
-  identity_provider_type      = "SERVICE_MANAGED"
-  sftp_authentication_methods = null
-
-  users = {
-    user1 = {
-      home_directory = "/bucket/user1"
-      role_arn       = aws_iam_role.transfer_user_role.arn
-      ssh_pub_keys   = ["ssh-ed25519 AAAAC3Nz..."]
-    }
-  }
-}
-```
+`custom_hostname` and `route53_hosted_zone_id` set the `transfer:customHostname` and `transfer:route53HostedZoneId` tags on the server, which the AWS console shows as its hostname. The module creates no DNS records.
 
 <!-- BEGIN_TF_DOCS -->
 ## Requirements
