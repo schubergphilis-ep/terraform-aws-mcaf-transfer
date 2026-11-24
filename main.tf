@@ -130,7 +130,7 @@ resource "aws_transfer_server" "default" {
   # ── Endpoint & logging ──────────────────────────────────────────────────────
   endpoint_type               = var.endpoint_type
   logging_role                = var.logging_role_arn
-  structured_log_destinations = var.structured_log_destinations
+  structured_log_destinations = var.create_log_group ? toset(["${aws_cloudwatch_log_group.default[0].arn}:*"]) : var.structured_log_destinations
 
   # ── Banners & security policy ───────────────────────────────────────────────
   pre_authentication_login_banner  = var.pre_authentication_login_banner
@@ -194,6 +194,20 @@ resource "aws_transfer_server" "default" {
       directory_listing_optimization = try(var.s3_storage_options.directory_listing_optimization, null)
     }
   }
+}
+
+# ── Optional: log group for structured logging ────────────────────────────────
+# Transfer adds a resource policy for delivery.logs.amazonaws.com to the log group
+# itself, as the caller, when it creates or updates the server.
+resource "aws_cloudwatch_log_group" "default" {
+  count = var.create_log_group ? 1 : 0
+
+  region            = var.region
+  name              = "/aws/transfer/${var.name}"
+  kms_key_id        = var.kms_key_arn
+  retention_in_days = var.log_retention
+  skip_destroy      = var.log_group_skip_destroy
+  tags              = var.tags
 }
 
 # ── VPC_ENDPOINT is deprecated by AWS: new servers can't use it and it's absent

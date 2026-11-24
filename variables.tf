@@ -159,13 +159,51 @@ variable "post_authentication_login_banner" {
 # ──────────────────────────────────────────────────────────────────────────────
 variable "logging_role_arn" {
   type        = string
-  description = "IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module)."
+  default     = null
+  description = "IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module). Needed for workflow logs and for the service-managed /aws/transfer/<server-id> log group; structured logging needs no role."
 }
 
 variable "structured_log_destinations" {
   type        = set(string)
   default     = null
-  description = "Set of CloudWatch Logs log-group ARNs for structured (JSON) logging. Leave null to use unstructured logging."
+  description = "Set of CloudWatch Logs log-group ARNs for structured (JSON) logging, in the form arn:<partition>:logs:<region>:<account>:log-group:<name>:*. At most one. Leave null to use unstructured logging, or use create_log_group."
+
+  validation {
+    condition = var.structured_log_destinations == null ? true : (
+      length(var.structured_log_destinations) <= 1 &&
+      alltrue([for arn in var.structured_log_destinations : can(regex("^arn:[^:]+:logs:[^:]+:[0-9]{12}:log-group:[^:]+:\\*$", arn))])
+    )
+    error_message = "structured_log_destinations takes at most one log group ARN, ending in \":*\" (arn:<partition>:logs:<region>:<account>:log-group:<name>:*)."
+  }
+}
+
+variable "create_log_group" {
+  type        = bool
+  default     = false
+  description = "Create the CloudWatch log group /aws/transfer/<name> and send the server's structured (JSON) logs to it. Conflicts with structured_log_destinations."
+
+  validation {
+    condition     = !var.create_log_group || (var.structured_log_destinations == null ? true : length(var.structured_log_destinations) == 0)
+    error_message = "Set either create_log_group or structured_log_destinations, not both."
+  }
+}
+
+variable "kms_key_arn" {
+  type        = string
+  default     = null
+  description = "The ARN of the KMS key used to encrypt the CloudWatch log group created with create_log_group"
+}
+
+variable "log_retention" {
+  type        = number
+  default     = 365
+  description = "Number of days to retain log events in the log group created with create_log_group"
+}
+
+variable "log_group_skip_destroy" {
+  type        = bool
+  default     = false
+  description = "Keep the log group created with create_log_group, and the log events in it, when the module is destroyed: Terraform only removes it from the state"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
