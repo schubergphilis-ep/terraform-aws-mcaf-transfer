@@ -318,6 +318,7 @@ module "example-transfer" {
 | [aws_iam_policy_document.logging_assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
+| [aws_vpc_endpoint.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/vpc_endpoint) | data source |
 
 ## Inputs
 
@@ -363,11 +364,20 @@ module "example-transfer" {
 
 | Name | Description |
 |------|-------------|
+| <a name="output_endpoint"></a> [endpoint](#output\_endpoint) | Endpoint hostname of the server. An internal VPC server has no DNS record for it: use vpc\_endpoint\_dns\_name. |
+| <a name="output_host_key_fingerprint"></a> [host\_key\_fingerprint](#output\_host\_key\_fingerprint) | Fingerprint of the server's host key. |
+| <a name="output_host_key_fingerprints"></a> [host\_key\_fingerprints](#output\_host\_key\_fingerprints) | Fingerprints of the managed host keys, by host key name. |
 | <a name="output_host_key_ids"></a> [host\_key\_ids](#output\_host\_key\_ids) | IDs of managed host keys attached to this server. |
+| <a name="output_log_group_arn"></a> [log\_group\_arn](#output\_log\_group\_arn) | ARN of the log group created with create\_log\_group. |
+| <a name="output_log_group_name"></a> [log\_group\_name](#output\_log\_group\_name) | Name of the log group created with create\_log\_group. |
 | <a name="output_logging_policy_deprecation"></a> [logging\_policy\_deprecation](#output\_logging\_policy\_deprecation) | Deprecation message for logging\_policy. |
+| <a name="output_logging_role_arn"></a> [logging\_role\_arn](#output\_logging\_role\_arn) | ARN of the logging role of the server: the role created with create\_logging\_role, or logging\_role\_arn. |
 | <a name="output_permissions_boundary_deprecation"></a> [permissions\_boundary\_deprecation](#output\_permissions\_boundary\_deprecation) | Deprecation message for permissions\_boundary. |
 | <a name="output_pre_login_banner_deprecation"></a> [pre\_login\_banner\_deprecation](#output\_pre\_login\_banner\_deprecation) | Deprecation message for pre\_login\_banner. |
 | <a name="output_server_arn"></a> [server\_arn](#output\_server\_arn) | ARN of the transfer server. |
 | <a name="output_server_id"></a> [server\_id](#output\_server\_id) | Server ID (stable identifier; must not change). |
+| <a name="output_ssh_key_ids"></a> [ssh\_key\_ids](#output\_ssh\_key\_ids) | IDs of the imported SSH public keys, by "<user>:<SHA-256 of the key body>". |
 | <a name="output_user_arns"></a> [user\_arns](#output\_user\_arns) | ARNs of the transfer users. |
+| <a name="output_vpc_endpoint_dns_name"></a> [vpc\_endpoint\_dns\_name](#output\_vpc\_endpoint\_dns\_name) | Regional DNS name of the server's VPC endpoint (VPC and VPC\_ENDPOINT endpoint types). |
+| <a name="output_vpc_endpoint_id"></a> [vpc\_endpoint\_id](#output\_vpc\_endpoint\_id) | ID of the server's VPC endpoint (VPC and VPC\_ENDPOINT endpoint types). |
 <!-- END_TF_DOCS -->

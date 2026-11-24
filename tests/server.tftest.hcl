@@ -57,6 +57,12 @@ run "default" {
     condition     = aws_transfer_server.default.tags.Name == "example"
     error_message = "Expected Name tag to equal module name 'example', got: ${aws_transfer_server.default.tags.Name}"
   }
+
+  # A PUBLIC server has no VPC endpoint to look up
+  assert {
+    condition     = length(data.aws_vpc_endpoint.default) == 0 && output.vpc_endpoint_id == null && output.vpc_endpoint_dns_name == null
+    error_message = "Expected no VPC endpoint outputs for a PUBLIC server."
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -107,6 +113,12 @@ run "vpc_endpoint_type" {
   assert {
     condition     = length(aws_transfer_server.default.endpoint_details[0].address_allocation_ids) == 2
     error_message = "Expected two EIP allocations, got: ${length(aws_transfer_server.default.endpoint_details[0].address_allocation_ids)}"
+  }
+
+  # The VPC endpoint is looked up for its DNS name
+  assert {
+    condition     = length(data.aws_vpc_endpoint.default) == 1
+    error_message = "Expected the VPC endpoint to be looked up for a VPC server."
   }
 }
 

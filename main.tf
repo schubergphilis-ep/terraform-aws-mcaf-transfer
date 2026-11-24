@@ -137,7 +137,7 @@ resource "aws_transfer_server" "default" {
 
   # ── Endpoint & logging ──────────────────────────────────────────────────────
   endpoint_type               = var.endpoint_type
-  logging_role                = var.create_logging_role ? module.logging_role[0].arn : var.logging_role_arn
+  logging_role                = local.logging_role_arn
   structured_log_destinations = var.create_log_group ? toset(["${aws_cloudwatch_log_group.default[0].arn}:*"]) : var.structured_log_destinations
 
   # ── Banners & security policy ───────────────────────────────────────────────
@@ -236,6 +236,8 @@ data "aws_region" "current" {
 }
 
 locals {
+  logging_role_arn = var.create_logging_role ? module.logging_role[0].arn : var.logging_role_arn
+
   logging_role_scope = var.create_logging_role ? {
     account   = data.aws_caller_identity.current[0].account_id
     partition = data.aws_partition.current[0].partition
@@ -297,6 +299,16 @@ module "logging_role" {
   postfix              = false
   role_policy          = data.aws_iam_policy_document.logging[0].json
   tags                 = var.tags
+}
+
+# ── VPC endpoint DNS name ─────────────────────────────────────────────────────
+# An internal VPC server has no s-<id>.server.transfer.<region>.amazonaws.com DNS
+# name: clients connect to the VPC endpoint.
+data "aws_vpc_endpoint" "default" {
+  count = var.endpoint_type == "PUBLIC" ? 0 : 1
+
+  region = var.region
+  id     = aws_transfer_server.default.endpoint_details[0].vpc_endpoint_id
 }
 
 # ── VPC_ENDPOINT is deprecated by AWS: new servers can't use it and it's absent
