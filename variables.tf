@@ -274,10 +274,16 @@ variable "manage_host_keys" {
 # tflint-ignore: terraform_typed_variables,terraform_unused_declarations
 variable "host_keys" {
   type = list(object({
-    private_key = string # Sensitive; inject from CI/env
+    name        = optional(string) # Stable key of the host key resource; defaults to the list index
+    private_key = string           # Sensitive; inject from CI/env
     description = optional(string)
   }))
   default     = []
   sensitive   = true
-  description = "List of host keys to attach. Private keys are passed via the write-only host_key_body_wo argument (TF 1.11+) and are never stored in state or plan."
+  description = "List of host keys to attach. Each key is identified by its name (the list index when unset), so removing or reordering a named key leaves the others in place. Private keys are passed via the write-only host_key_body_wo argument (TF 1.11+) and are never stored in state."
+
+  validation {
+    condition     = length(distinct([for idx, host_key in var.host_keys : coalesce(host_key.name, tostring(idx))])) == length(var.host_keys)
+    error_message = "host_keys names must be unique. An unnamed key is named after its list index."
+  }
 }

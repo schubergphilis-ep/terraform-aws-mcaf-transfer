@@ -19,6 +19,18 @@ locals {
       ]
     ]) : "${item.user}:${item.index}" => item
   }
+
+  # Host keys keyed by name; an unnamed key is named after its list index. Only the private keys
+  # are secret, so the names and descriptions are taken out of the sensitive host_keys input.
+  host_key_list = var.manage_host_keys ? nonsensitive([
+    for idx, host_key in var.host_keys : {
+      description = host_key.description
+      index       = idx
+      name        = coalesce(host_key.name, tostring(idx))
+    }
+  ]) : []
+
+  host_keys = { for host_key in local.host_key_list : host_key.name => host_key }
 }
 
 resource "aws_transfer_server" "default" {
@@ -195,17 +207,17 @@ check "vpc_endpoint_deprecated" {
 
 # ── Optional: explicit server host keys ───────────────────────────────────────
 # Private key is supplied via the write-only argument host_key_body_wo (TF 1.11+),
-# so it is never persisted to state or plan. There is no _wo_version companion on
-# this resource; rotate a key by replacing the corresponding host_keys element.
+# so it is never persisted to state. There is no _wo_version companion on this
+# resource; rotate a key by adding a new host_keys element, then removing the old one.
 resource "aws_transfer_host_key" "managed" {
-  count = var.manage_host_keys ? length(var.host_keys) : 0
+  for_each = local.host_keys
 
   region           = var.region
   server_id        = aws_transfer_server.default.id
-  host_key_body_wo = var.host_keys[count.index].private_key
-  description      = try(var.host_keys[count.index].description, null)
+  host_key_body_wo = var.host_keys[each.value.index].private_key
+  description      = each.value.description
 
-  tags = merge(var.tags, { Name = format("%s-host-key-%d", var.name, count.index) })
+  tags = merge(var.tags, { Name = "${var.name}-host-key-${each.key}" })
 }
 
 resource "aws_transfer_tag" "custom_hostname" {

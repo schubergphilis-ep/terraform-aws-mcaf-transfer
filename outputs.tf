@@ -14,6 +14,6 @@ output "user_arns" {
 }
 
 output "host_key_ids" {
-  value       = aws_transfer_host_key.managed[*].host_key_id
+  value       = [for host_key in local.host_key_list : aws_transfer_host_key.managed[host_key.name].host_key_id]
   description = "IDs of managed host keys attached to this server."
 }
