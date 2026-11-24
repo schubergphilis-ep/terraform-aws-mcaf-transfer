@@ -7,17 +7,17 @@ locals {
   # Normalize Route 53 zone ID to its raw form (strip optional "/hostedzone/" prefix).
   route53_zone_id = var.route53_hosted_zone_id == null ? null : replace(var.route53_hosted_zone_id, "/^\\/hostedzone\\//", "")
 
-  # Flatten users' SSH keys into a stable map
+  # Users' SSH keys keyed by user name and a SHA-256 hash of the key body, so removing or
+  # reordering a key leaves the other keys in place. A key listed twice for a user is imported once.
   user_ssh_keys = {
     for item in flatten([
       for user, config in var.users : [
-        for idx, ssh_key in config.ssh_pub_keys : {
-          index   = idx
+        for ssh_key in distinct(config.ssh_pub_keys) : {
           user    = user
           ssh_key = ssh_key
         }
       ]
-    ]) : "${item.user}:${item.index}" => item
+    ]) : "${item.user}:${sha256(item.ssh_key)}" => item
   }
 
   # Host keys keyed by name; an unnamed key is named after its list index. Only the private keys

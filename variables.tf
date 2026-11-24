@@ -195,7 +195,7 @@ variable "users" {
     ssh_pub_keys   = list(string)
   }))
   default     = {}
-  description = "Transfer users: home_directory, role_arn, and SSH public keys."
+  description = "Transfer users: home_directory, role_arn, and SSH public keys. Each SSH key is identified by its user and a SHA-256 hash of the key body, so the keys must be known at plan time."
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

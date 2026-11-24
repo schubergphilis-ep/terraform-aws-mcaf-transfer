@@ -128,3 +128,79 @@ run "reject_duplicate_host_key_names" {
 
   expect_failures = [var.host_keys]
 }
+
+# -----------------------------------------------------------------------------
+# SSH keys: keyed by user and a SHA-256 hash of the key body, not the list
+# index. A key listed twice for a user is imported once.
+# -----------------------------------------------------------------------------
+run "ssh_keys_keyed_by_body" {
+  command = plan
+
+  module {
+    source = "./"
+  }
+
+  variables {
+    name             = "example-sshkeys"
+    logging_role_arn = "arn:aws:iam::123456789012:role/transfer-logging"
+    users = {
+      alice = {
+        home_directory = "/example-bucket/alice"
+        role_arn       = "arn:aws:iam::123456789012:role/transfer-user"
+        ssh_pub_keys = [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop",
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice2 alice@desktop",
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop",
+        ]
+      }
+      bob = {
+        home_directory = "/example-bucket/bob"
+        role_arn       = "arn:aws:iam::123456789012:role/transfer-user"
+        ssh_pub_keys   = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop"]
+      }
+    }
+  }
+
+  assert {
+    condition = toset(keys(aws_transfer_ssh_key.default)) == toset([
+      "alice:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop")}",
+      "alice:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice2 alice@desktop")}",
+      "bob:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop")}",
+    ])
+    error_message = "Expected SSH keys keyed by user and key hash, got: ${jsonencode(keys(aws_transfer_ssh_key.default))}"
+  }
+
+  assert {
+    condition     = aws_transfer_ssh_key.default["bob:${sha256("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop")}"].body == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBob1 bob@laptop"
+    error_message = "Expected the SSH key body to be passed unchanged."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Negative: SSH keys need SERVICE_MANAGED users.
+# -----------------------------------------------------------------------------
+run "reject_ssh_keys_with_custom_idp" {
+  command = plan
+
+  module {
+    source = "./"
+  }
+
+  variables {
+    name                   = "example-sshkeys"
+    logging_role_arn       = "arn:aws:iam::123456789012:role/transfer-logging"
+    identity_provider_type = "AWS_LAMBDA"
+    identity_provider_details = {
+      function_arn = "arn:aws:lambda:eu-central-1:123456789012:function:transfer-idp"
+    }
+    users = {
+      alice = {
+        home_directory = "/example-bucket/alice"
+        role_arn       = "arn:aws:iam::123456789012:role/transfer-user"
+        ssh_pub_keys   = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAlice1 alice@laptop"]
+      }
+    }
+  }
+
+  expect_failures = [aws_transfer_ssh_key.default]
+}
