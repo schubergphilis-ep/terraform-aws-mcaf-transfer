@@ -117,7 +117,9 @@ Give each host key a `name`: keys are identified by name, or by their list index
 
 Structured logging needs no logging role. When Terraform creates or updates the server, AWS Transfer Family adds a resource policy for `delivery.logs.amazonaws.com` to the log group as the deploying principal, which needs `logs:DescribeLogGroups`, `logs:DescribeResourcePolicies` and `logs:PutResourcePolicy`. The KMS key policy must allow `logs.<region>.amazonaws.com`.
 
-A logging role is only needed for workflow logs and the service-managed `/aws/transfer/<server-id>` log group: set `create_logging_role = true` for a role limited to `/aws/transfer/*` log groups (`logging_role_name`, `logging_role_description`, `logging_role_permissions_boundary`), or pass your own `logging_role_arn`.
+A logging role is only needed for workflow logs: set `create_logging_role = true` for a role limited to `/aws/transfer/*` log groups (`logging_role_name`, `logging_role_description`, `logging_role_permissions_boundary`), or pass your own `logging_role_arn`.
+
+With any logging role, AWS Transfer Family also writes every session to the log group `/aws/transfer/<server-id>`, which it creates itself, outside Terraform: without a KMS key, without retention, and kept after `terraform destroy`. With `create_log_group` the same events then land in both log groups. Use `create_log_group` without a logging role, unless workflows need one.
 
 ## Custom hostname
 

@@ -17,9 +17,9 @@ No input change is needed. The module needs Terraform 1.11.0 or later and AWS pr
   }
   ```
 
-  The host key `description` is no longer shown as sensitive.
+  The host key `description` is no longer marked as sensitive: the plan shows an in-place update of each host key with the same value.
 
-- **Custom hostname tags** are set on the server's own tags. `aws_transfer_tag.custom_hostname` and `aws_transfer_tag.route53_zone` are removed from the state without being deleted, and `aws_transfer_server.default` is updated in place to add the `transfer:customHostname` and `transfer:route53HostedZoneId` tags.
+- **Custom hostname tags** are set on the server's own tags. `aws_transfer_tag.custom_hostname` and `aws_transfer_tag.route53_zone` are removed from the state without being deleted. The server keeps the `transfer:customHostname` and `transfer:route53HostedZoneId` tags: the provider reads them back into its `tags`, so the plan shows no server change.
 
 - **VPC endpoint lookup**: for `VPC` and `VPC_ENDPOINT` servers the module reads the VPC endpoint for the `vpc_endpoint_dns_name` output, so the plan needs `ec2:DescribeVpcEndpoints`.
 
