@@ -7,7 +7,15 @@ locals {
   # Normalize Route 53 zone ID to its raw form (strip optional "/hostedzone/" prefix).
   route53_zone_id = var.route53_hosted_zone_id == null ? null : replace(var.route53_hosted_zone_id, "/^\\/hostedzone\\//", "")
 
-  # Flatten users' SSH keys into a stable map
+  # Custom hostname tags go on the server's own tags: separate aws_transfer_tag resources are read
+  # back into the server's tags and removed again on every apply. Whether they are set depends on
+  # custom_hostname only, so a zone ID that is known after apply does not fail the plan.
+  hostname_tags = var.custom_hostname == null ? {} : merge(
+    { "transfer:customHostname" = var.custom_hostname },
+    var.route53_hosted_zone_id == null ? {} : { "transfer:route53HostedZoneId" = local.route53_zone_id },
+  )
+
+  # Users' SSH keys keyed by user name and list index
   user_ssh_keys = {
     for item in flatten([
       for user, config in var.users : [
@@ -19,6 +27,18 @@ locals {
       ]
     ]) : "${item.user}:${item.index}" => item
   }
+
+  # Host keys keyed by name; an unnamed key is named after its list index. Only the private keys
+  # are secret, so the names and descriptions are taken out of the sensitive host_keys input.
+  host_key_list = var.manage_host_keys ? nonsensitive([
+    for idx, host_key in var.host_keys : {
+      description = host_key.description
+      index       = idx
+      name        = coalesce(host_key.name, tostring(idx))
+    }
+  ]) : []
+
+  host_keys = { for host_key in local.host_key_list : host_key.name => host_key }
 }
 
 resource "aws_transfer_server" "default" {
@@ -102,6 +122,8 @@ resource "aws_transfer_server" "default" {
     }
   }
 
+  region = var.region
+
   # ── Identity provider & authentication (v5/v6) ──────────────────────────────
   identity_provider_type = var.identity_provider_type
   # NOTE: In v5+, this is a top-level arg (also valid in v6). Only for API_GATEWAY/AWS_LAMBDA.
@@ -115,8 +137,8 @@ resource "aws_transfer_server" "default" {
 
   # ── Endpoint & logging ──────────────────────────────────────────────────────
   endpoint_type               = var.endpoint_type
-  logging_role                = var.logging_role_arn
-  structured_log_destinations = var.structured_log_destinations
+  logging_role                = local.logging_role_arn
+  structured_log_destinations = var.create_log_group ? toset(["${aws_cloudwatch_log_group.default[0].arn}:*"]) : var.structured_log_destinations
 
   # ── Banners & security policy ───────────────────────────────────────────────
   pre_authentication_login_banner  = var.pre_authentication_login_banner
@@ -127,7 +149,7 @@ resource "aws_transfer_server" "default" {
   protocols = var.protocols
 
   # ── Tags (preserve original Name usage) ─────────────────────────────────────
-  tags = merge(var.tags, { Name = var.name })
+  tags = merge(var.tags, local.hostname_tags, { Name = var.name })
 
   # ── Endpoint details (VPC / VPC_ENDPOINT) ───────────────────────────────────
   dynamic "endpoint_details" {
@@ -182,6 +204,113 @@ resource "aws_transfer_server" "default" {
   }
 }
 
+# ── Optional: log group for structured logging ────────────────────────────────
+# Transfer adds a resource policy for delivery.logs.amazonaws.com to the log group
+# itself, as the caller, when it creates or updates the server.
+resource "aws_cloudwatch_log_group" "default" {
+  count = var.create_log_group ? 1 : 0
+
+  region            = var.region
+  name              = "/aws/transfer/${var.name}"
+  kms_key_id        = var.kms_key_arn
+  retention_in_days = var.log_retention
+  skip_destroy      = var.log_group_skip_destroy
+  tags              = var.tags
+}
+
+# ── Optional: logging role ────────────────────────────────────────────────────
+# Used by Transfer for workflow logs and the service-managed /aws/transfer/<server-id>
+# log group. Structured logging to a log group does not need it.
+data "aws_caller_identity" "current" {
+  count = var.create_logging_role ? 1 : 0
+}
+
+data "aws_partition" "current" {
+  count = var.create_logging_role ? 1 : 0
+}
+
+data "aws_region" "current" {
+  count = var.create_logging_role ? 1 : 0
+
+  region = var.region
+}
+
+locals {
+  logging_role_arn = var.create_logging_role ? module.logging_role[0].arn : var.logging_role_arn
+
+  logging_role_scope = var.create_logging_role ? {
+    account   = data.aws_caller_identity.current[0].account_id
+    partition = data.aws_partition.current[0].partition
+    region    = data.aws_region.current[0].region
+  } : null
+}
+
+data "aws_iam_policy_document" "logging_assume_role" {
+  count = var.create_logging_role ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["transfer.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [local.logging_role_scope.account]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.logging_role_scope.partition}:transfer:${local.logging_role_scope.region}:${local.logging_role_scope.account}:server/*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "logging" {
+  count = var.create_logging_role ? 1 : 0
+
+  statement {
+    sid = "TransferLogGroups"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:DescribeLogStreams",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:${local.logging_role_scope.partition}:logs:${local.logging_role_scope.region}:${local.logging_role_scope.account}:log-group:/aws/transfer/*"]
+  }
+}
+
+module "logging_role" {
+  count = var.create_logging_role ? 1 : 0
+
+  source  = "schubergphilis-ep/mcaf-role/aws"
+  version = "~> 0.6.0"
+
+  name                 = coalesce(var.logging_role_name, "TransferLogging-${var.name}")
+  assume_policy        = data.aws_iam_policy_document.logging_assume_role[0].json
+  create_policy        = true
+  description          = var.logging_role_description
+  permissions_boundary = var.logging_role_permissions_boundary
+  postfix              = false
+  role_policy          = data.aws_iam_policy_document.logging[0].json
+  tags                 = var.tags
+}
+
+# ── VPC endpoint DNS name ─────────────────────────────────────────────────────
+# An internal VPC server has no s-<id>.server.transfer.<region>.amazonaws.com DNS
+# name: clients connect to the VPC endpoint.
+data "aws_vpc_endpoint" "default" {
+  count = var.endpoint_type == "PUBLIC" ? 0 : 1
+
+  region = var.region
+  id     = aws_transfer_server.default.endpoint_details[0].vpc_endpoint_id
+}
+
 # ── VPC_ENDPOINT is deprecated by AWS: new servers can't use it and it's absent
 #    in newer regions. Emit a non-blocking warning steering callers to VPC. ─────
 check "vpc_endpoint_deprecated" {
@@ -193,38 +322,27 @@ check "vpc_endpoint_deprecated" {
 
 # ── Optional: explicit server host keys ───────────────────────────────────────
 # Private key is supplied via the write-only argument host_key_body_wo (TF 1.11+),
-# so it is never persisted to state or plan. There is no _wo_version companion on
-# this resource; rotate a key by replacing the corresponding host_keys element.
+# so it is never persisted to state. There is no _wo_version companion on this
+# resource; rotate a key by adding a new host_keys element, then removing the old one.
 resource "aws_transfer_host_key" "managed" {
-  count = var.manage_host_keys ? length(var.host_keys) : 0
+  for_each = local.host_keys
 
+  region           = var.region
   server_id        = aws_transfer_server.default.id
-  host_key_body_wo = var.host_keys[count.index].private_key
-  description      = try(var.host_keys[count.index].description, null)
+  host_key_body_wo = var.host_keys[each.value.index].private_key
+  description      = each.value.description
 
-  tags = merge(var.tags, { Name = format("%s-host-key-%d", var.name, count.index) })
-}
-
-resource "aws_transfer_tag" "custom_hostname" {
-  count        = var.custom_hostname == null ? 0 : 1
-  resource_arn = aws_transfer_server.default.arn
-  key          = "transfer:customHostname"
-  value        = var.custom_hostname
-}
-
-resource "aws_transfer_tag" "route53_zone" {
-  count        = local.route53_zone_id == null ? 0 : 1
-  resource_arn = aws_transfer_server.default.arn
-  key          = "transfer:route53HostedZoneId"
-  value        = local.route53_zone_id
+  tags = merge(var.tags, { Name = "${var.name}-host-key-${each.key}" })
 }
 
 # ── Users (IAM roles provided by caller) ───────────────────────────────────────
 resource "aws_transfer_user" "default" {
   for_each = var.users
 
+  region              = var.region
   user_name           = each.key
   role                = each.value.role_arn
+  policy              = each.value.policy
   server_id           = aws_transfer_server.default.id
   home_directory      = var.restricted_mode ? null : each.value.home_directory
   home_directory_type = var.restricted_mode ? "LOGICAL" : "PATH"
@@ -233,10 +351,13 @@ resource "aws_transfer_user" "default" {
   tags = merge(var.tags, { Name = "${var.name}-${each.key}" })
 
   dynamic "home_directory_mappings" {
-    for_each = var.restricted_mode ? [1] : []
+    for_each = var.restricted_mode ? (
+      each.value.home_directory_mappings != null ? each.value.home_directory_mappings : [{ entry = "/", target = each.value.home_directory }]
+    ) : []
+
     content {
-      entry  = "/"
-      target = each.value.home_directory
+      entry  = home_directory_mappings.value.entry
+      target = home_directory_mappings.value.target
     }
   }
 }
@@ -244,6 +365,7 @@ resource "aws_transfer_user" "default" {
 resource "aws_transfer_ssh_key" "default" {
   for_each = local.user_ssh_keys
 
+  region    = var.region
   server_id = aws_transfer_server.default.id
   user_name = aws_transfer_user.default[each.value.user].user_name
   body      = each.value.ssh_key

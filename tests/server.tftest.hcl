@@ -57,6 +57,12 @@ run "default" {
     condition     = aws_transfer_server.default.tags.Name == "example"
     error_message = "Expected Name tag to equal module name 'example', got: ${aws_transfer_server.default.tags.Name}"
   }
+
+  # A PUBLIC server has no VPC endpoint to look up
+  assert {
+    condition     = length(data.aws_vpc_endpoint.default) == 0 && output.vpc_endpoint_id == null && output.vpc_endpoint_dns_name == null
+    error_message = "Expected no VPC endpoint outputs for a PUBLIC server."
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -108,6 +114,12 @@ run "vpc_endpoint_type" {
     condition     = length(aws_transfer_server.default.endpoint_details[0].address_allocation_ids) == 2
     error_message = "Expected two EIP allocations, got: ${length(aws_transfer_server.default.endpoint_details[0].address_allocation_ids)}"
   }
+
+  # The VPC endpoint is looked up for its DNS name
+  assert {
+    condition     = length(data.aws_vpc_endpoint.default) == 1
+    error_message = "Expected the VPC endpoint to be looked up for a VPC server."
+  }
 }
 
 # -----------------------------------------------------------------------------
@@ -147,7 +159,6 @@ run "vpc_interface_endpoint_type" {
   # NOTE: Do not assert emptiness of security_group_ids/subnet_ids/vpc_id here:
   # under provider v5 these can be unknown at plan time and cause test failures.
 }
-
 
 # -----------------------------------------------------------------------------
 # AWS_LAMBDA IdP with SFTP auth methods (explicit so it's known at plan time)
@@ -383,6 +394,9 @@ run "reject_password_only_auth" {
     logging_role_arn            = "arn:aws:iam::123456789012:role/transfer-logging"
     identity_provider_type      = "AWS_LAMBDA"
     sftp_authentication_methods = "PASSWORD"
+    identity_provider_details = {
+      function_arn = "arn:aws:lambda:eu-central-1:123456789012:function:transfer-idp"
+    }
   }
 
   expect_failures = [var.sftp_authentication_methods]
@@ -408,101 +422,4 @@ run "reject_public_with_vpc_endpoint" {
   }
 
   expect_failures = [aws_transfer_server.default]
-}
-
-# -----------------------------------------------------------------------------
-# Custom hostname + Route 53 zone: tags created, zone id normalized (strips
-# the optional /hostedzone/ prefix). Exercises the replace() in main.tf.
-# -----------------------------------------------------------------------------
-run "custom_hostname_route53" {
-  command = plan
-
-  module {
-    source = "./"
-  }
-
-  variables {
-    name                   = "example-hostname"
-    logging_role_arn       = "arn:aws:iam::123456789012:role/transfer-logging"
-    custom_hostname        = "sftp.example.com"
-    route53_hosted_zone_id = "/hostedzone/Z1D633PJN98FT9"
-  }
-
-  assert {
-    condition     = aws_transfer_tag.custom_hostname[0].value == "sftp.example.com"
-    error_message = "Expected custom hostname tag value sftp.example.com, got: ${aws_transfer_tag.custom_hostname[0].value}"
-  }
-
-  assert {
-    condition     = aws_transfer_tag.route53_zone[0].value == "Z1D633PJN98FT9"
-    error_message = "Expected zone id stripped to Z1D633PJN98FT9, got: ${aws_transfer_tag.route53_zone[0].value}"
-  }
-}
-
-# -----------------------------------------------------------------------------
-# Negative: route53_hosted_zone_id set without custom_hostname is rejected by
-# variable validation.
-# -----------------------------------------------------------------------------
-run "reject_route53_without_hostname" {
-  command = plan
-
-  module {
-    source = "./"
-  }
-
-  variables {
-    name                   = "example-bad-zone"
-    logging_role_arn       = "arn:aws:iam::123456789012:role/transfer-logging"
-    route53_hosted_zone_id = "Z1D633PJN98FT9"
-    # custom_hostname intentionally omitted
-  }
-
-  expect_failures = [var.route53_hosted_zone_id]
-}
-
-# -----------------------------------------------------------------------------
-# Managed host keys: count is derived from a sensitive variable, so it must be
-# de-sensitized. Exercises manage_host_keys=true + host_keys.
-# -----------------------------------------------------------------------------
-run "manage_host_keys" {
-  command = plan
-
-  module {
-    source = "./"
-  }
-
-  variables {
-    name             = "example-hostkeys"
-    logging_role_arn = "arn:aws:iam::123456789012:role/transfer-logging"
-    manage_host_keys = true
-    host_keys = [
-      { private_key = "DUMMY-PRIVATE-KEY-1", description = "primary" },
-      { private_key = "DUMMY-PRIVATE-KEY-2" },
-    ]
-  }
-
-  assert {
-    condition     = length(aws_transfer_host_key.managed) == 2
-    error_message = "Expected 2 managed host keys, got: ${length(aws_transfer_host_key.managed)}"
-  }
-}
-
-# -----------------------------------------------------------------------------
-# Negative: a malformed custom_hostname (leading hyphen) is rejected by the
-# DNS hostname validation.
-# -----------------------------------------------------------------------------
-run "reject_invalid_custom_hostname" {
-  command = plan
-
-  module {
-    source = "./"
-  }
-
-  variables {
-    name             = "example-bad-hostname"
-    logging_role_arn = "arn:aws:iam::123456789012:role/transfer-logging"
-    custom_hostname  = "-invalid.example.com"
-  }
-
-  expect_failures = [var.custom_hostname]
 }

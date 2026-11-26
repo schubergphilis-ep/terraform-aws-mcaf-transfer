@@ -11,6 +11,12 @@ variable "name" {
   }
 }
 
+variable "region" {
+  type        = string
+  default     = null
+  description = "The AWS region where resources will be created; if omitted the default provider region is used"
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}
@@ -40,6 +46,16 @@ variable "vpc_endpoint" {
   })
   default     = null
   description = "Endpoint details depending on endpoint_type. For VPC, set vpc_id, subnet_ids, security_group_ids[, address_allocation_ids]. For VPC_ENDPOINT, set vpc_endpoint_id."
+
+  validation {
+    condition = var.vpc_endpoint == null ? true : (
+      var.vpc_endpoint.address_allocation_ids == null ? true : (
+        length(var.vpc_endpoint.address_allocation_ids) == 0 ||
+        length(var.vpc_endpoint.address_allocation_ids) == (var.vpc_endpoint.subnet_ids == null ? 0 : length(var.vpc_endpoint.subnet_ids))
+      )
+    )
+    error_message = "vpc_endpoint.address_allocation_ids needs one Elastic IP allocation per subnet in vpc_endpoint.subnet_ids."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -92,7 +108,17 @@ variable "identity_provider_details" {
     directory_id    = optional(string) # For AWS_DIRECTORY_SERVICE
   })
   default     = null
-  description = "Optional identity provider details; fields depend on identity_provider_type."
+  description = "Identity provider details; fields depend on identity_provider_type: function_arn for AWS_LAMBDA, url and invocation_role for API_GATEWAY, directory_id for AWS_DIRECTORY_SERVICE, none for SERVICE_MANAGED."
+
+  validation {
+    condition = toset(var.identity_provider_details == null ? [] : [for field, value in var.identity_provider_details : field if value != null]) == lookup({
+      SERVICE_MANAGED       = toset([])
+      AWS_LAMBDA            = toset(["function_arn"])
+      API_GATEWAY           = toset(["invocation_role", "url"])
+      AWS_DIRECTORY_SERVICE = toset(["directory_id"])
+    }, var.identity_provider_type, toset([]))
+    error_message = "identity_provider_details must match identity_provider_type: function_arn for AWS_LAMBDA, url and invocation_role for API_GATEWAY, directory_id for AWS_DIRECTORY_SERVICE, and none for SERVICE_MANAGED."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -153,13 +179,85 @@ variable "post_authentication_login_banner" {
 # ──────────────────────────────────────────────────────────────────────────────
 variable "logging_role_arn" {
   type        = string
-  description = "IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module)."
+  default     = null
+  description = "IAM role ARN assumed by Transfer for CloudWatch logging (created outside this module). Needed for workflow logs and for the service-managed /aws/transfer/<server-id> log group; structured logging needs no role."
+}
+
+variable "create_logging_role" {
+  type        = bool
+  default     = false
+  description = "Create an IAM role that Transfer uses to write workflow logs and the service-managed /aws/transfer/<server-id> log group. Conflicts with logging_role_arn."
+
+  validation {
+    condition     = !var.create_logging_role || var.logging_role_arn == null
+    error_message = "Set either create_logging_role or logging_role_arn, not both."
+  }
+
+  validation {
+    condition     = !var.create_logging_role || length(coalesce(var.logging_role_name, "TransferLogging-${var.name}")) <= 64
+    error_message = "The logging role name is longer than 64 characters: set a shorter logging_role_name."
+  }
+}
+
+variable "logging_role_description" {
+  type        = string
+  default     = null
+  description = "Description of the IAM role created with create_logging_role"
+}
+
+variable "logging_role_name" {
+  type        = string
+  default     = null
+  description = "Name of the IAM role created with create_logging_role. Defaults to TransferLogging-<name>"
+}
+
+variable "logging_role_permissions_boundary" {
+  type        = string
+  default     = null
+  description = "ARN of the permissions boundary to set on the IAM role created with create_logging_role"
 }
 
 variable "structured_log_destinations" {
   type        = set(string)
   default     = null
-  description = "Set of CloudWatch Logs log-group ARNs for structured (JSON) logging. Leave null to use unstructured logging."
+  description = "Set of CloudWatch Logs log-group ARNs for structured (JSON) logging, in the form arn:<partition>:logs:<region>:<account>:log-group:<name>:*. At most one. Leave null to use unstructured logging, or use create_log_group."
+
+  validation {
+    condition = var.structured_log_destinations == null ? true : (
+      length(var.structured_log_destinations) <= 1 &&
+      alltrue([for arn in var.structured_log_destinations : can(regex("^arn:[^:]+:logs:[^:]+:[0-9]{12}:log-group:[^:]+:\\*$", arn))])
+    )
+    error_message = "structured_log_destinations takes at most one log group ARN, ending in \":*\" (arn:<partition>:logs:<region>:<account>:log-group:<name>:*)."
+  }
+}
+
+variable "create_log_group" {
+  type        = bool
+  default     = false
+  description = "Create the CloudWatch log group /aws/transfer/<name> and send the server's structured (JSON) logs to it. Conflicts with structured_log_destinations."
+
+  validation {
+    condition     = !var.create_log_group || (var.structured_log_destinations == null ? true : length(var.structured_log_destinations) == 0)
+    error_message = "Set either create_log_group or structured_log_destinations, not both."
+  }
+}
+
+variable "kms_key_arn" {
+  type        = string
+  default     = null
+  description = "The ARN of the KMS key used to encrypt the CloudWatch log group created with create_log_group"
+}
+
+variable "log_retention" {
+  type        = number
+  default     = 365
+  description = "Number of days to retain log events in the log group created with create_log_group"
+}
+
+variable "log_group_skip_destroy" {
+  type        = bool
+  default     = false
+  description = "Keep the log group created with create_log_group, and the log events in it, when the module is destroyed: Terraform only removes it from the state"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -185,11 +283,65 @@ variable "restricted_mode" {
 variable "users" {
   type = map(object({
     home_directory = string
-    role_arn       = string # External IAM role (created in your IAM module)
-    ssh_pub_keys   = list(string)
+    home_directory_mappings = optional(list(object({
+      entry  = string
+      target = string
+    })))
+    policy       = optional(string)
+    role_arn     = string # External IAM role (created in your IAM module)
+    ssh_pub_keys = list(string)
   }))
   default     = {}
-  description = "Transfer users: home_directory, role_arn, and SSH public keys."
+  description = "Transfer users keyed by user name. home_directory is the PATH home directory, or with restricted_mode the target of the \"/\" mapping. home_directory_mappings (restricted_mode only) replaces that single mapping. policy is an optional session policy (JSON). SSH keys are identified by user and list index: add new keys at the end of ssh_pub_keys."
+
+  validation {
+    condition     = alltrue([for name in keys(var.users) : can(regex("^[\\w][\\w@.-]{2,99}$", name))])
+    error_message = "User names must be 3-100 characters of letters, digits, underscores, hyphens, periods and at signs, and must not start with a hyphen, period or at sign."
+  }
+
+  validation {
+    condition = alltrue([
+      for user in values(var.users) : user.home_directory == "" || (can(regex("^/", user.home_directory)) && length(user.home_directory) <= 1024)
+    ])
+    error_message = "home_directory must be an absolute path: start with \"/\", at most 1024 characters."
+  }
+
+  validation {
+    condition = !var.restricted_mode || alltrue([
+      for user in values(var.users) : user.home_directory_mappings != null || can(regex("^/.*[^/]$", user.home_directory))
+    ])
+    error_message = "With restricted_mode, home_directory is a logical directory target: it must start with \"/\" and must not end with \"/\"."
+  }
+
+  validation {
+    condition     = var.restricted_mode || alltrue([for user in values(var.users) : user.home_directory_mappings == null])
+    error_message = "home_directory_mappings needs restricted_mode = true (LOGICAL home directories)."
+  }
+
+  validation {
+    condition = alltrue(flatten([
+      for user in values(var.users) : [
+        for mapping in(user.home_directory_mappings == null ? [] : user.home_directory_mappings) : can(regex("^/", mapping.entry)) && can(regex("^/.*[^/]$", mapping.target))
+      ]
+    ]))
+    error_message = "Each home_directory_mappings entry must start with \"/\", and each target must start with \"/\" and must not end with \"/\"."
+  }
+
+  validation {
+    condition = alltrue([
+      for user in values(var.users) : user.home_directory_mappings == null ? true : (
+        length(user.home_directory_mappings) > 0 &&
+        length(distinct(user.home_directory_mappings[*].entry)) == length(user.home_directory_mappings) &&
+        (length(user.home_directory_mappings) == 1 || !contains(user.home_directory_mappings[*].entry, "/"))
+      )
+    ])
+    error_message = "home_directory_mappings must not overlap: entries must be unique, and an entry \"/\" must be the only mapping of its user."
+  }
+
+  validation {
+    condition     = alltrue([for user in values(var.users) : user.policy == null || can(jsondecode(user.policy))])
+    error_message = "A user's policy must be a JSON session policy document."
+  }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -268,10 +420,16 @@ variable "manage_host_keys" {
 # tflint-ignore: terraform_typed_variables,terraform_unused_declarations
 variable "host_keys" {
   type = list(object({
-    private_key = string # Sensitive; inject from CI/env
+    name        = optional(string) # Stable key of the host key resource; defaults to the list index
+    private_key = string           # Sensitive; inject from CI/env
     description = optional(string)
   }))
   default     = []
   sensitive   = true
-  description = "List of host keys to attach. Private keys are passed via the write-only host_key_body_wo argument (TF 1.11+) and are never stored in state or plan."
+  description = "List of host keys to attach. Each key is identified by its name (the list index when unset), so removing or reordering a named key leaves the others in place. Private keys are passed via the write-only host_key_body_wo argument (TF 1.11+) and are never stored in state."
+
+  validation {
+    condition     = length(distinct([for idx, host_key in var.host_keys : coalesce(host_key.name, tostring(idx))])) == length(var.host_keys)
+    error_message = "host_keys names must be unique. An unnamed key is named after its list index."
+  }
 }
